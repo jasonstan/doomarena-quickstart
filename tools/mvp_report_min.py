@@ -42,6 +42,20 @@ def _load_run_meta(rows_path: pathlib.Path) -> dict[str, Any]:
         return json.load(handle)
 
 
+def _load_verifiers(rows_path: pathlib.Path) -> list[dict[str, Any]]:
+    verifiers_path = rows_path.parent / "verifiers.json"
+    if not verifiers_path.exists():
+        return []
+    try:
+        with verifiers_path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        return []
+    if isinstance(data, list):
+        return data
+    return []
+
+
 def _format_percent(value: str | float | None) -> str:
     if value is None:
         return "0%"
@@ -73,6 +87,7 @@ def main() -> None:
     rows = _load_rows(args.rows)
     summary = _load_summary(args.summary)
     run_meta = _load_run_meta(args.rows)
+    verifiers = _load_verifiers(args.rows)
 
     overall = summary.get("overall", {})
 
@@ -90,6 +105,8 @@ def main() -> None:
         ".badge-http{background-color:#ffe5e5;color:#a00000;}"
         ".badge-network{background-color:#e5f1ff;color:#0055aa;}"
         ".stats{margin:12px 0;padding:10px;border:1px solid #ddd;border-radius:6px;background-color:#fafafa;}"
+        ".methodology{margin:20px 0;}"
+        ".methodology-entry{margin-bottom:16px;padding:12px;border:1px solid #ddd;border-radius:6px;background-color:#fdfdfd;}"
         "</style>"
     )
     html_parts.append(
@@ -152,8 +169,37 @@ def main() -> None:
         "</div>"
     )
 
+    if verifiers:
+        html_parts.append("<h2>Methodology</h2>")
+        html_parts.append("<div class='methodology'>")
+        for entry in sorted(verifiers, key=lambda item: str(item.get("attack_id", ""))):
+            attack_id = html.escape(str(entry.get("attack_id", "")))
+            nl_desc = html.escape(str(entry.get("nl", "")))
+            rule_type = html.escape(str(entry.get("type", "")))
+            threshold = html.escape(str(entry.get("threshold", "")))
+            patterns_raw = entry.get("patterns", [])
+            if not isinstance(patterns_raw, list):
+                patterns_raw = [patterns_raw]
+            patterns_display = html.escape(json.dumps(patterns_raw, ensure_ascii=False))
+            explanation = html.escape(str(entry.get("explanation", "")))
+            html_parts.append("<div class='methodology-entry'>")
+            html_parts.append(f"<p><strong>Attack ID:</strong> {attack_id}</p>")
+            html_parts.append(
+                f"<p><strong>Natural-language description:</strong> {nl_desc}</p>"
+            )
+            html_parts.append(f"<p><strong>Rule:</strong> {rule_type}</p>")
+            html_parts.append(f"<p><strong>Threshold:</strong> {threshold}</p>")
+            html_parts.append(
+                f"<p><strong>Patterns:</strong> <code>{patterns_display}</code></p>"
+            )
+            html_parts.append(
+                f"<p><strong>In plain English:</strong> {explanation}</p>"
+            )
+            html_parts.append("</div>")
+        html_parts.append("</div>")
+
     html_parts.append(
-        "<table><thead><tr><th>Attempt</th><th>Attack ID</th><th>Success</th><th>Input</th><th>Output</th><th>Verifier</th></tr></thead><tbody>"
+        "<table><thead><tr><th>Attempt</th><th>Attack ID</th><th>Success</th><th>Input</th><th>Output</th><th>Why success?</th></tr></thead><tbody>"
     )
     for index, row in enumerate(rows):
         attempt = html.escape(str(row.get("trial_id", index)))
@@ -190,16 +236,23 @@ def main() -> None:
             }
             badge_label = badge_label_map.get(badge_kind, "other")
             badge_class = f"badge badge-{html.escape(badge_kind)}"
-            badge_html = f"<span class='{badge_class}'>Excluded – {html.escape(badge_label)}</span>"
+            badge_html = f"<span class='{badge_class}'>Excluded - {html.escape(badge_label)}</span>"
 
-        verifier_rule = html.escape(str(row.get("verifier_rule_id", "-")) or "-")
-        verifier_threshold = html.escape(str(row.get("verifier_threshold", "-")) or "-")
-        verifier_matched = "true" if row.get("verifier_matched") else "false"
-        verifier_pattern = html.escape(str(row.get("verifier_pattern", "")))
-        verifier_cell = (
-            f"rule={verifier_rule} • threshold={verifier_threshold} "
-            f"• matched={verifier_matched} • pattern=\"{verifier_pattern}\""
+        verifier_rule_raw = str(row.get("verifier_rule_id", "-")) or "-"
+        verifier_threshold_raw = str(row.get("verifier_threshold", "-")) or "-"
+        verifier_matched_raw = "true" if row.get("verifier_matched") else "false"
+        verifier_pattern_raw = str(row.get("verifier_pattern", ""))
+        fallback_text = (
+            f"rule={verifier_rule_raw} • threshold={verifier_threshold_raw} "
+            f"• matched={verifier_matched_raw} • pattern=\"{verifier_pattern_raw}\""
         )
+        why_success = ""
+        if attempt_status == "ok" and bool(count_in_asr):
+            why_field = row.get("verifier_why")
+            if why_field:
+                why_success = html.escape(str(why_field))
+            else:
+                why_success = html.escape(fallback_text)
 
         html_parts.append(
             "<tr>"
@@ -208,7 +261,7 @@ def main() -> None:
             f"<td class='{success_class}'>{success_label}</td>"
             f"<td>{input_cell}</td>"
             f"<td>{output_cell}</td>"
-            f"<td>{verifier_cell}</td>"
+            f"<td>{why_success}</td>"
             "</tr>"
         )
     html_parts.append("</tbody></table>")

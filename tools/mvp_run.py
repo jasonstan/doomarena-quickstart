@@ -20,7 +20,7 @@ if str(TOOLS_DIR) not in sys.path:
 
 import smoke_single_attack  # type: ignore
 
-ProviderCaller = Callable[[str, str, float], str]
+ProviderCaller = Callable[[str, str, float], tuple[str, dict[str, Any]]]
 
 
 def _parse_bool(value: str | bool) -> bool:
@@ -38,20 +38,23 @@ def _build_caller(provider: str, *, groq_base: str, openai_base: str) -> Provide
     provider = provider.lower()
     if provider == "groq":
 
-        def _call(prompt: str, model: str, temperature: float) -> str:
-            return smoke_single_attack._call_groq(prompt, model, temperature, groq_base)
+        def _call(prompt: str, model: str, temperature: float) -> tuple[str, dict[str, Any]]:
+            text = smoke_single_attack._call_groq(prompt, model, temperature, groq_base)
+            return text, {}
 
         return _call
     if provider == "openai":
 
-        def _call(prompt: str, model: str, temperature: float) -> str:
-            return smoke_single_attack._call_openai(prompt, model, temperature, openai_base)
+        def _call(prompt: str, model: str, temperature: float) -> tuple[str, dict[str, Any]]:
+            text = smoke_single_attack._call_openai(prompt, model, temperature, openai_base)
+            return text, {}
 
         return _call
     if provider == "mock":
 
-        def _call(prompt: str, _model: str, _temperature: float) -> str:
-            return smoke_single_attack._call_mock(prompt)
+        def _call(prompt: str, _model: str, _temperature: float) -> tuple[str, dict[str, Any]]:
+            text = smoke_single_attack._call_mock(prompt)
+            return text, {}
 
         return _call
     raise ValueError(f"Unsupported provider: {provider}")
@@ -275,7 +278,8 @@ def main() -> None:
         for case in cases:
             attack_id = case.get("attack_id")
             persona = case.get("persona")
-            prompt = case.get("prompt", "")
+            literal_prompt = str(case.get("prompt", ""))
+            variant_id = str(case.get("variant_id", "base")) if case.get("variant_id") else "base"
             if not attack_id:
                 continue
             for trial_index in range(args.trials):
@@ -288,7 +292,8 @@ def main() -> None:
                     "trial_id": trial_id,
                     "attack_id": attack_id,
                     "persona": persona,
-                    "input_text": prompt,
+                    "variant_id": variant_id,
+                    "input_text": literal_prompt,
                     "callable": caller is not None,
                 }
 
@@ -309,7 +314,11 @@ def main() -> None:
                     while True:
                         _await_turn()
                         try:
-                            output_text = caller(prompt, args.model, args.temperature)
+                            output_text, _meta = caller(
+                                literal_prompt,
+                                args.model,
+                                args.temperature,
+                            )
                             attempt_status = "ok"
                             count_in_asr = True
                             last_error = None
